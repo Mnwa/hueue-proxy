@@ -51,6 +51,17 @@ async fn main() {
         }
     };
 
+    let max_pending_connections: u32 = match std::env::var("MAX_PENDING_CONNECTIONS")
+        .unwrap_or_else(|_| "1024".to_string())
+        .parse()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(target: "init", "{:?}", e);
+            return;
+        }
+    };
+
     let allowed_ips_result: Option<Result<Vec<IpAddr>, _>> =
         std::env::var("ALLOWED_IPS").ok().map(|allowed| {
             allowed
@@ -69,7 +80,7 @@ async fn main() {
         }
     };
 
-    let listener = match make_listener(listening_addr) {
+    let listener = match make_listener(listening_addr, max_pending_connections) {
         Ok(l) => l,
         Err(e) => {
             error!(target: "init", "{:?}", e);
@@ -113,7 +124,10 @@ async fn main() {
     }
 }
 
-fn make_listener(listening_addr: SocketAddr) -> Result<TcpListener, IOError> {
+fn make_listener(
+    listening_addr: SocketAddr,
+    max_pending_connections: u32,
+) -> Result<TcpListener, IOError> {
     let socket = match listening_addr {
         SocketAddr::V4(_) => TcpSocket::new_v4(),
         SocketAddr::V6(_) => TcpSocket::new_v6(),
@@ -121,7 +135,7 @@ fn make_listener(listening_addr: SocketAddr) -> Result<TcpListener, IOError> {
 
     socket.bind(listening_addr)?;
 
-    socket.listen(1024)
+    socket.listen(max_pending_connections)
 }
 
 async fn make_connect(buffer: &mut BytesMut, stream: &mut TcpStream) -> Result<(), Socks5Error> {
