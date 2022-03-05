@@ -2,9 +2,9 @@ extern crate core;
 
 use crate::request::ResponseStatus;
 use bytes::BytesMut;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::io::Error as IOError;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::Utf8Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -51,6 +51,24 @@ async fn main() {
         }
     };
 
+    let allowed_ips_result: Option<Result<Vec<IpAddr>, _>> =
+        std::env::var("ALLOWED_IPS").ok().map(|allowed| {
+            allowed
+                .split(',')
+                .map(|ip| ip.trim())
+                .map(|ip| ip.parse::<IpAddr>())
+                .collect()
+        });
+
+    let allowed_ips = match allowed_ips_result {
+        None => None,
+        Some(Ok(a)) => Some(a),
+        Some(Err(e)) => {
+            error!(target: "init", "{:?}", e);
+            return;
+        }
+    };
+
     let listener = match make_listener(listening_addr) {
         Ok(l) => l,
         Err(e) => {
@@ -60,6 +78,10 @@ async fn main() {
     };
 
     while let Ok((mut stream, addr)) = listener.accept().await {
+        if matches!(allowed_ips.as_ref(), Some(ips) if !ips.contains(&addr.ip())) {
+            warn!(target: "connect", "bad ip {}", addr);
+            continue;
+        }
         tokio::spawn(async move {
             debug!(target: "connect", "new {}", addr);
             let mut buffer = BytesMut::new();
