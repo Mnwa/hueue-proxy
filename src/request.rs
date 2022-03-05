@@ -200,7 +200,7 @@ impl From<Command> for ResponseStatus {
     fn from(command: Command) -> Self {
         match command {
             Command::Connect => ResponseStatus::Success,
-            Command::Bind => ResponseStatus::Success,
+            Command::Bind => ResponseStatus::CommandNotSupported,
             Command::UdpAssociate => ResponseStatus::CommandNotSupported,
         }
     }
