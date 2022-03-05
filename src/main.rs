@@ -13,6 +13,9 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 mod connect;
 mod request;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub const SOCKS5_VERSION: u8 = 0x05;
 pub const SUB_NEGOTIATION_VERSION: u8 = 0x01;
 pub const ALLOWED_RESERVED: u8 = 0x00;
