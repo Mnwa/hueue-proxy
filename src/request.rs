@@ -76,8 +76,8 @@ impl ProxyAddress {
                 ProxyAddress::V6(SocketAddrV6::new(addr, port, 0, 0))
             }
             ProxyAddressType::Domain => {
-                let octets = rdr.read_u8()?;
-                let mut buf = vec![0u8; octets as usize];
+                let octets = rdr.read_u8()? as usize;
+                let mut buf = vec![0u8; octets];
                 rdr.read_exact(&mut buf)?;
 
                 let domain = std::str::from_utf8(buf.as_slice())?;

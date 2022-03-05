@@ -1,5 +1,6 @@
 extern crate core;
 
+use crate::connect::Method;
 use crate::request::ResponseStatus;
 use bytes::BytesMut;
 use log::{debug, error, info, warn};
@@ -13,6 +14,7 @@ mod connect;
 mod request;
 
 pub const SOCKS5_VERSION: u8 = 0x05;
+pub const SUB_NEGOTIATION_VERSION: u8 = 0x01;
 pub const ALLOWED_RESERVED: u8 = 0x00;
 
 #[derive(Debug)]
@@ -80,6 +82,18 @@ async fn main() {
         }
     };
 
+    let user_password: Option<String> = std::env::var("USER_PASSWORD").ok();
+    let user_password: Option<(String, String)> = match user_password {
+        None => None,
+        Some(up) => match up.split_once(':') {
+            Some((u, p)) => Some((u.trim().to_string(), p.trim().to_string())),
+            None => {
+                error!(target: "init", "invalid user or password");
+                return;
+            }
+        },
+    };
+
     let listener = match make_listener(listening_addr, max_pending_connections) {
         Ok(l) => l,
         Err(e) => {
@@ -93,10 +107,11 @@ async fn main() {
             warn!(target: "connect", "bad ip {}", addr);
             continue;
         }
+        let user_password = user_password.clone();
         tokio::spawn(async move {
             debug!(target: "connect", "new {}", addr);
             let mut buffer = BytesMut::new();
-            if let Err(e) = make_connect(&mut buffer, &mut stream).await {
+            if let Err(e) = make_connect(&mut buffer, &mut stream, user_password).await {
                 error!(target: "connect", "{:?}", e);
                 return;
             }
@@ -138,16 +153,49 @@ fn make_listener(
     socket.listen(max_pending_connections)
 }
 
-async fn make_connect(buffer: &mut BytesMut, stream: &mut TcpStream) -> Result<(), Socks5Error> {
+async fn make_connect(
+    buffer: &mut BytesMut,
+    stream: &mut TcpStream,
+    user_password: Option<(String, String)>,
+) -> Result<(), Socks5Error> {
     stream.read_buf(buffer).await?;
     debug!(target: "connect request", "raw {:?}", buffer);
     let request = connect::ConnectRequest::try_from(buffer.as_ref())?;
     info!(target: "connect request", "parsed {:?}", request);
-    let response = connect::ConnectResponse::from(request);
+
+    let method = if user_password.is_some() {
+        if request.methods.contains(&Method::UserPassword) {
+            Method::UserPassword
+        } else {
+            Method::NotAcceptable
+        }
+    } else if request.methods.contains(&Method::NoAuth) {
+        Method::NoAuth
+    } else {
+        Method::NotAcceptable
+    };
+
+    let response = connect::ConnectResponse::from(method);
     info!(target: "connect response", "parsed {:?}", response);
     let response_buf: Vec<u8> = response.into();
     debug!(target: "connect response", "raw {:?}", response_buf);
     stream.write_all(&response_buf).await?;
+
+    if let Some((u, p)) = user_password {
+        buffer.clear();
+
+        stream.read_buf(buffer).await?;
+        info!(target: "auth request", "accept");
+        let request = connect::UserPasswordRequest::try_from(buffer.as_ref())?;
+        let response = connect::UserPasswordResponse {
+            is_valid: request.is_valid(u, p),
+        };
+        info!(target: "auth response", "parsed {:?}", response);
+        let response_buf: Vec<u8> = response.into();
+        debug!(target: "auth response", "raw {:?}", response_buf);
+        stream.write_all(&response_buf).await?;
+    }
+
     Ok(())
 }
 
