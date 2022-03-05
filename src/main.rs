@@ -102,10 +102,13 @@ async fn main() {
 
             drop(buffer);
 
+            // todo: make connection timeout
             while tokio::io::copy_bidirectional(&mut stream, &mut connect)
                 .await
                 .is_ok()
             {}
+
+            info!(target: "connection", "closed {}", addr)
         });
     }
 }
