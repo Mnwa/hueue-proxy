@@ -138,3 +138,59 @@ impl From<UserPasswordResponse> for Vec<u8> {
         vec![SUB_NEGOTIATION_VERSION, status]
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::connect::{
+        ConnectRequest, ConnectResponse, UserPasswordRequest, UserPasswordResponse,
+    };
+    use crate::{Method, SOCKS5_VERSION, SUB_NEGOTIATION_VERSION};
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_no_auth_connect() {
+        let raw_request = vec![SOCKS5_VERSION, 1, 0x00];
+        let parsed_request = ConnectRequest::try_from(raw_request.as_slice()).unwrap();
+
+        assert_eq!(parsed_request.methods, HashSet::from([Method::NoAuth]))
+    }
+
+    #[test]
+    fn test_no_auth_response() {
+        let parsed_response = ConnectResponse {
+            method: Method::NoAuth,
+        };
+
+        assert_eq!(Vec::from(parsed_response), vec![SOCKS5_VERSION, 0x00])
+    }
+
+    #[test]
+    fn test_auth_request() {
+        let user = "u_test".as_bytes();
+        let password = "p_test".as_bytes();
+
+        let mut raw_request = vec![SUB_NEGOTIATION_VERSION];
+        raw_request.push(user.len() as u8);
+        raw_request.extend_from_slice(user);
+        raw_request.push(password.len() as u8);
+        raw_request.extend_from_slice(password);
+
+        let parsed_request = UserPasswordRequest::try_from(raw_request.as_slice()).unwrap();
+
+        assert_eq!(parsed_request.username.as_bytes(), user);
+        assert_eq!(parsed_request.password.as_bytes(), password);
+        assert!(parsed_request.is_valid(
+            std::str::from_utf8(user).unwrap().to_string(),
+            std::str::from_utf8(password).unwrap().to_string()
+        ))
+    }
+
+    #[test]
+    fn test_auth_response() {
+        let parsed_response = UserPasswordResponse { is_valid: true };
+        assert_eq!(Vec::from(parsed_response), vec![SUB_NEGOTIATION_VERSION, 0]);
+
+        let parsed_response = UserPasswordResponse { is_valid: false };
+        assert_eq!(Vec::from(parsed_response), vec![SUB_NEGOTIATION_VERSION, 1])
+    }
+}
