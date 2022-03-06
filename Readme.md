@@ -33,7 +33,7 @@ cargo test
 
 ### Feature list
 - [x] `CONNECT` command
-- [] `BIND` command
+- [ ] `BIND` command
 - [ ] `ASSOCIATE` command
 - [x] Username/password authentication
 - [ ] GSSAPI authentication
