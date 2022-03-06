@@ -4,7 +4,7 @@ use std::io::{Cursor, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use tokio::net::lookup_host;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Request {
     pub command: Command,
     pub address: ProxyAddress,
@@ -54,7 +54,7 @@ impl TryFrom<u8> for Command {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProxyAddress {
     V4(SocketAddrV4),
     V6(SocketAddrV6),
@@ -109,7 +109,10 @@ impl TryFrom<ProxyAddress> for Vec<u8> {
                 buf.write_u16::<NetworkEndian>(socket.port())?;
             }
             ProxyAddress::Domain(domain, port) => {
-                buf.write_all(domain.as_bytes())?;
+                let domain = domain.as_bytes();
+                buf.write_u8(ProxyAddressType::Domain as u8)?;
+                buf.write_u8(domain.len() as u8)?;
+                buf.write_all(domain)?;
                 buf.write_u16::<NetworkEndian>(port)?;
             }
         };
@@ -207,5 +210,173 @@ impl From<Socks5Error> for ResponseStatus {
             Socks5Error::InvalidReserved(_) => ResponseStatus::ServerError,
             Socks5Error::Utf8Error(_) => ResponseStatus::AddressNotSupported,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::request::{Command, ProxyAddress, ProxyAddressType, Request, Response};
+    use crate::{ResponseStatus, ALLOWED_RESERVED, SOCKS5_VERSION};
+    use byteorder::{NetworkEndian, WriteBytesExt};
+    use std::io::Cursor;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+    #[test]
+    fn test_request_connect() {
+        let mut raw_request = vec![SOCKS5_VERSION, 0x01, ALLOWED_RESERVED, 0x01];
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+        raw_request.extend_from_slice(&ip.octets());
+        raw_request.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(
+            Request::try_from(raw_request.as_slice()).unwrap(),
+            Request {
+                command: Command::Connect,
+                address: ProxyAddress::V4(SocketAddrV4::new(ip, port))
+            }
+        )
+    }
+
+    #[test]
+    fn test_response_connect() {
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+
+        let parsed_response = Response {
+            status: ResponseStatus::from(Command::Connect),
+            address: ProxyAddress::V4(SocketAddrV4::new(ip, port)),
+        };
+
+        let mut raw_response = vec![SOCKS5_VERSION, 0x00, ALLOWED_RESERVED, 0x01];
+        raw_response.extend_from_slice(&ip.octets());
+        raw_response.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(parsed_response).unwrap(), raw_response)
+    }
+
+    #[test]
+    fn test_request_bind() {
+        let mut raw_request = vec![SOCKS5_VERSION, 0x02, ALLOWED_RESERVED, 0x01];
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+        raw_request.extend_from_slice(&ip.octets());
+        raw_request.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(
+            Request::try_from(raw_request.as_slice()).unwrap(),
+            Request {
+                command: Command::Bind,
+                address: ProxyAddress::V4(SocketAddrV4::new(ip, port))
+            }
+        )
+    }
+
+    #[test]
+    fn test_response_bind() {
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+
+        let parsed_response = Response {
+            status: ResponseStatus::from(Command::Bind),
+            address: ProxyAddress::V4(SocketAddrV4::new(ip, port)),
+        };
+
+        let mut raw_response = vec![SOCKS5_VERSION, 0x07, ALLOWED_RESERVED, 0x01];
+        raw_response.extend_from_slice(&ip.octets());
+        raw_response.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(parsed_response).unwrap(), raw_response)
+    }
+
+    #[test]
+    fn test_request_udp() {
+        let mut raw_request = vec![SOCKS5_VERSION, 0x03, ALLOWED_RESERVED, 0x01];
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+        raw_request.extend_from_slice(&ip.octets());
+        raw_request.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(
+            Request::try_from(raw_request.as_slice()).unwrap(),
+            Request {
+                command: Command::UdpAssociate,
+                address: ProxyAddress::V4(SocketAddrV4::new(ip, port))
+            }
+        )
+    }
+
+    #[test]
+    fn test_response_udp() {
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+
+        let parsed_response = Response {
+            status: ResponseStatus::from(Command::UdpAssociate),
+            address: ProxyAddress::V4(SocketAddrV4::new(ip, port)),
+        };
+
+        let mut raw_response = vec![SOCKS5_VERSION, 0x07, ALLOWED_RESERVED, 0x01];
+        raw_response.extend_from_slice(&ip.octets());
+        raw_response.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(parsed_response).unwrap(), raw_response)
+    }
+
+    #[test]
+    fn test_proxy_address_v4() {
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 1080;
+
+        let addr = ProxyAddress::V4(SocketAddrV4::new(ip, port));
+
+        let mut raw_addr = vec![ProxyAddressType::V4 as u8];
+        raw_addr.extend_from_slice(&ip.octets());
+        raw_addr.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(addr.clone()).unwrap(), raw_addr.clone());
+        assert_eq!(
+            ProxyAddress::try_from_reader(&mut Cursor::new(raw_addr)).unwrap(),
+            addr
+        )
+    }
+
+    #[test]
+    fn test_proxy_address_v6() {
+        let ip = Ipv6Addr::new(1, 1, 1, 1, 1, 1, 1, 1);
+        let port = 1080;
+
+        let addr = ProxyAddress::V6(SocketAddrV6::new(ip, port, 0, 0));
+
+        let mut raw_addr = vec![ProxyAddressType::V6 as u8];
+        raw_addr.extend_from_slice(&ip.octets());
+        raw_addr.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(addr.clone()).unwrap(), raw_addr.clone());
+        assert_eq!(
+            ProxyAddress::try_from_reader(&mut Cursor::new(raw_addr)).unwrap(),
+            addr
+        )
+    }
+
+    #[test]
+    fn test_proxy_address_domain() {
+        let domain = "localhost".to_string();
+        let port = 1080;
+
+        let addr = ProxyAddress::Domain(domain.clone(), port);
+
+        let mut raw_addr = vec![
+            ProxyAddressType::Domain as u8,
+            domain.as_bytes().len() as u8,
+        ];
+        raw_addr.extend_from_slice(domain.as_bytes());
+        raw_addr.write_u16::<NetworkEndian>(port).unwrap();
+
+        assert_eq!(Vec::try_from(addr.clone()).unwrap(), raw_addr.clone());
+        assert_eq!(
+            ProxyAddress::try_from_reader(&mut Cursor::new(raw_addr)).unwrap(),
+            addr
+        )
     }
 }
