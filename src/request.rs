@@ -1,7 +1,8 @@
 use crate::{Socks5Error, ALLOWED_RESERVED, SOCKS5_VERSION};
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use tokio::net::lookup_host;
 
 #[derive(Debug)]
 pub struct Request {
@@ -126,24 +127,15 @@ impl From<SocketAddr> for ProxyAddress {
     }
 }
 
-impl TryFrom<ProxyAddress> for Vec<SocketAddr> {
-    type Error = std::io::Error;
-
-    fn try_from(value: ProxyAddress) -> Result<Self, Self::Error> {
-        Ok(match value {
-            ProxyAddress::V4(a) => vec![SocketAddr::V4(a)],
-            ProxyAddress::V6(a) => vec![SocketAddr::V6(a)],
-            ProxyAddress::Domain(domain, port) => {
-                let addresses = dns_lookup::lookup_host(&domain)?;
-                addresses
-                    .into_iter()
-                    .map(|ip| match ip {
-                        IpAddr::V4(ip) => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-                        IpAddr::V6(ip) => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
-                    })
-                    .collect()
-            }
-        })
+impl ProxyAddress {
+    pub async fn try_into_socket_addresses(&self) -> Result<Vec<SocketAddr>, std::io::Error> {
+        match self {
+            ProxyAddress::V4(a) => lookup_host(a).await.map(|iter| iter.collect()),
+            ProxyAddress::V6(a) => lookup_host(a).await.map(|iter| iter.collect()),
+            ProxyAddress::Domain(domain, port) => lookup_host((domain.as_str(), *port))
+                .await
+                .map(|iter| iter.collect()),
+        }
     }
 }
 

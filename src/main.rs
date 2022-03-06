@@ -227,7 +227,7 @@ async fn handle_request(
         }
     };
 
-    let addresses: Vec<SocketAddr> = address.try_into()?;
+    let addresses = address.try_into_socket_addresses().await?;
 
     let connection = TcpStream::connect(addresses.as_slice()).await?;
 
