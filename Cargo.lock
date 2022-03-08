@@ -79,7 +79,6 @@ name = "hueue-proxy"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "bytes",
  "env_logger",
  "log",
  "mimalloc",

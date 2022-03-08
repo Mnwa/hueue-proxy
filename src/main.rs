@@ -2,7 +2,6 @@ extern crate core;
 
 use crate::connect::Method;
 use crate::request::ResponseStatus;
-use bytes::BytesMut;
 use log::{debug, error, info, warn};
 use std::io::Error as IOError;
 use std::net::{IpAddr, SocketAddr};
@@ -113,7 +112,7 @@ async fn main() {
         let user_password = user_password.clone();
         tokio::spawn(async move {
             debug!(target: "connect", "new {}", addr);
-            let mut buffer = BytesMut::new();
+            let mut buffer = Vec::new();
             if let Err(e) = make_connect(&mut buffer, &mut stream, user_password).await {
                 error!(target: "connect", "{:?}", e);
                 return;
@@ -156,7 +155,7 @@ fn make_listener(
 }
 
 async fn make_connect(
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     stream: &mut TcpStream,
     user_password: Option<(String, String)>,
 ) -> Result<(), Socks5Error> {
@@ -202,7 +201,7 @@ async fn make_connect(
 }
 
 async fn handle_request(
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     stream: &mut TcpStream,
     listening_addr: SocketAddr,
 ) -> Result<TcpStream, Socks5Error> {
