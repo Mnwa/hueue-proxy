@@ -8,6 +8,22 @@ pub struct ConnectRequest {
     pub methods: HashSet<Method>,
 }
 
+impl ConnectRequest {
+    pub fn get_allowed_method(&self, auth_required: bool) -> Method {
+        if auth_required {
+            if self.methods.contains(&Method::UserPassword) {
+                Method::UserPassword
+            } else {
+                Method::NotAcceptable
+            }
+        } else if self.methods.contains(&Method::NoAuth) {
+            Method::NoAuth
+        } else {
+            Method::NotAcceptable
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a [u8]> for ConnectRequest {
     type Error = Socks5Error;
 
@@ -142,9 +158,9 @@ impl From<UserPasswordResponse> for Vec<u8> {
 #[cfg(test)]
 mod test {
     use crate::connect::{
-        ConnectRequest, ConnectResponse, UserPasswordRequest, UserPasswordResponse,
+        ConnectRequest, ConnectResponse, Method, UserPasswordRequest, UserPasswordResponse,
     };
-    use crate::{Method, SOCKS5_VERSION, SUB_NEGOTIATION_VERSION};
+    use crate::{SOCKS5_VERSION, SUB_NEGOTIATION_VERSION};
     use std::collections::HashSet;
 
     #[test]

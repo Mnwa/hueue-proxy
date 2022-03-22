@@ -1,16 +1,17 @@
 extern crate core;
 
-use crate::connect::Method;
 use crate::request::ResponseStatus;
 use log::{debug, error, info, warn};
-use std::io::Error as IOError;
-use std::net::{IpAddr, SocketAddr};
+use std::io::{Error as IOError};
+use std::net::{ SocketAddr};
 use std::str::Utf8Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use crate::init::{Auth, Opts};
 
 mod connect;
 mod request;
+mod init;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -42,58 +43,12 @@ impl From<Utf8Error> for Socks5Error {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-
-    let listening_addr: SocketAddr = match std::env::var("ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:1080".to_string())
-        .parse()
-    {
-        Ok(a) => a,
+    let Opts { listening_addr, max_pending_connections, allowed_ips, auth } = match Opts::init() {
+        Ok(o) => o,
         Err(e) => {
             error!(target: "init", "{:?}", e);
             return;
         }
-    };
-
-    let max_pending_connections: u32 = match std::env::var("MAX_PENDING_CONNECTIONS")
-        .unwrap_or_else(|_| "1024".to_string())
-        .parse()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            error!(target: "init", "{:?}", e);
-            return;
-        }
-    };
-
-    let allowed_ips_result: Option<Result<Vec<IpAddr>, _>> =
-        std::env::var("ALLOWED_IPS").ok().map(|allowed| {
-            allowed
-                .split(',')
-                .map(|ip| ip.trim())
-                .map(|ip| ip.parse::<IpAddr>())
-                .collect()
-        });
-
-    let allowed_ips = match allowed_ips_result {
-        None => None,
-        Some(Ok(a)) => Some(a),
-        Some(Err(e)) => {
-            error!(target: "init", "{:?}", e);
-            return;
-        }
-    };
-
-    let user_password: Option<String> = std::env::var("USER_PASSWORD").ok();
-    let user_password: Option<(String, String)> = match user_password {
-        None => None,
-        Some(up) => match up.split_once(':') {
-            Some((u, p)) => Some((u.trim().to_string(), p.trim().to_string())),
-            None => {
-                error!(target: "init", "invalid user or password");
-                return;
-            }
-        },
     };
 
     let listener = match make_listener(listening_addr, max_pending_connections) {
@@ -109,11 +64,11 @@ async fn main() {
             warn!(target: "connect", "bad ip {}", addr);
             continue;
         }
-        let user_password = user_password.clone();
+        let auth = auth.clone();
         tokio::spawn(async move {
             debug!(target: "connect", "new {}", addr);
             let mut buffer = Vec::new();
-            if let Err(e) = make_connect(&mut buffer, &mut stream, user_password).await {
+            if let Err(e) = make_connect(&mut buffer, &mut stream, auth).await {
                 error!(target: "connect", "{:?}", e);
                 return;
             }
@@ -157,24 +112,14 @@ fn make_listener(
 async fn make_connect(
     buffer: &mut Vec<u8>,
     stream: &mut TcpStream,
-    user_password: Option<(String, String)>,
+    auth: Option<Auth>,
 ) -> Result<(), Socks5Error> {
     stream.read_buf(buffer).await?;
     debug!(target: "connect request", "raw {:?}", buffer);
     let request = connect::ConnectRequest::try_from(buffer.as_ref())?;
     info!(target: "connect request", "parsed {:?}", request);
 
-    let method = if user_password.is_some() {
-        if request.methods.contains(&Method::UserPassword) {
-            Method::UserPassword
-        } else {
-            Method::NotAcceptable
-        }
-    } else if request.methods.contains(&Method::NoAuth) {
-        Method::NoAuth
-    } else {
-        Method::NotAcceptable
-    };
+    let method = request.get_allowed_method(auth.is_some());
 
     let response = connect::ConnectResponse::from(method);
     info!(target: "connect response", "parsed {:?}", response);
@@ -182,21 +127,26 @@ async fn make_connect(
     debug!(target: "connect response", "raw {:?}", response_buf);
     stream.write_all(&response_buf).await?;
 
-    if let Some((u, p)) = user_password {
+    if let Some(auth) = auth {
         buffer.clear();
-
-        stream.read_buf(buffer).await?;
-        info!(target: "auth request", "accept");
-        let request = connect::UserPasswordRequest::try_from(buffer.as_ref())?;
-        let response = connect::UserPasswordResponse {
-            is_valid: request.is_valid(u, p),
-        };
-        info!(target: "auth response", "parsed {:?}", response);
-        let response_buf: Vec<u8> = response.into();
-        debug!(target: "auth response", "raw {:?}", response_buf);
-        stream.write_all(&response_buf).await?;
+        login(auth, buffer, stream).await?
     }
 
+    Ok(())
+}
+
+async fn login(Auth{ user, password }: Auth, buffer: &mut Vec<u8>,
+              stream: &mut TcpStream,) -> Result<(), Socks5Error> {
+    stream.read_buf(buffer).await?;
+    info!(target: "auth request", "accept");
+    let request = connect::UserPasswordRequest::try_from(buffer.as_ref())?;
+    let response = connect::UserPasswordResponse {
+        is_valid: request.is_valid(user, password),
+    };
+    info!(target: "auth response", "parsed {:?}", response);
+    let response_buf: Vec<u8> = response.into();
+    debug!(target: "auth response", "raw {:?}", response_buf);
+    stream.write_all(&response_buf).await?;
     Ok(())
 }
 
