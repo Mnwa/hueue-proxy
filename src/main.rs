@@ -43,7 +43,7 @@ impl From<Utf8Error> for Socks5Error {
 
 #[tokio::main]
 async fn main() {
-    let Opts { listening_addr, max_pending_connections, allowed_ips, auth } = match Opts::init() {
+    let opts = match Opts::init() {
         Ok(o) => o,
         Err(e) => {
             error!(target: "init", "{:?}", e);
@@ -51,6 +51,24 @@ async fn main() {
         }
     };
 
+    start_listening_connections(opts).await
+}
+
+fn make_listener(
+    listening_addr: SocketAddr,
+    max_pending_connections: u32,
+) -> Result<TcpListener, IOError> {
+    let socket = match listening_addr {
+        SocketAddr::V4(_) => TcpSocket::new_v4(),
+        SocketAddr::V6(_) => TcpSocket::new_v6(),
+    }?;
+
+    socket.bind(listening_addr)?;
+
+    socket.listen(max_pending_connections)
+}
+
+async fn start_listening_connections(Opts { listening_addr, max_pending_connections, allowed_ips, auth }: Opts) {
     let listener = match make_listener(listening_addr, max_pending_connections) {
         Ok(l) => l,
         Err(e) => {
@@ -92,22 +110,7 @@ async fn main() {
 
             info!(target: "connection", "closed {}", addr)
         });
-    }
-}
-
-fn make_listener(
-    listening_addr: SocketAddr,
-    max_pending_connections: u32,
-) -> Result<TcpListener, IOError> {
-    let socket = match listening_addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4(),
-        SocketAddr::V6(_) => TcpSocket::new_v6(),
-    }?;
-
-    socket.bind(listening_addr)?;
-
-    socket.listen(max_pending_connections)
-}
+}}
 
 async fn make_connect(
     buffer: &mut Vec<u8>,
@@ -153,7 +156,7 @@ async fn login(Auth{ user, password }: Auth, buffer: &mut Vec<u8>,
 async fn handle_request(
     buffer: &mut Vec<u8>,
     stream: &mut TcpStream,
-    listening_addr: SocketAddr,
+    proxy_addr: SocketAddr,
 ) -> Result<TcpStream, Socks5Error> {
     stream.read_buf(buffer).await?;
     debug!(target: "handle request", "raw {:?}", buffer);
@@ -170,7 +173,7 @@ async fn handle_request(
     let address = match address_result {
         Ok(r) => r.address,
         Err(s) => {
-            send_response(stream, s, listening_addr).await?;
+            send_response(stream, s, proxy_addr).await?;
             return Err(Socks5Error::Parse(std::io::ErrorKind::InvalidData.into()));
         }
     };
@@ -179,7 +182,7 @@ async fn handle_request(
 
     let connection = TcpStream::connect(addresses.as_slice()).await?;
 
-    send_response(stream, ResponseStatus::Success, listening_addr).await?;
+    send_response(stream, ResponseStatus::Success, proxy_addr).await?;
 
     Ok(connection)
 }
@@ -187,11 +190,11 @@ async fn handle_request(
 async fn send_response(
     stream: &mut TcpStream,
     status: ResponseStatus,
-    listening_addr: SocketAddr,
+    proxy_addr: SocketAddr,
 ) -> Result<(), Socks5Error> {
     let response = request::Response {
         status,
-        address: listening_addr.into(),
+        address: proxy_addr.into(),
     };
 
     info!(target: "handle response", "parsed {:?}", response);
