@@ -15,4 +15,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macro
 byteorder = "1"
 log = "0.4"
 env_logger = "0.9"
-mimalloc = "0.1"

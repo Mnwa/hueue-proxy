@@ -1,20 +1,17 @@
 extern crate core;
 
+use crate::init::{Auth, Opts};
 use crate::request::ResponseStatus;
 use log::{debug, error, info, warn};
-use std::io::{Error as IOError};
-use std::net::{ SocketAddr};
+use std::io::Error as IOError;
+use std::net::SocketAddr;
 use std::str::Utf8Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
-use crate::init::{Auth, Opts};
 
 mod connect;
-mod request;
 mod init;
-
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+mod request;
 
 pub const SOCKS5_VERSION: u8 = 0x05;
 pub const SUB_NEGOTIATION_VERSION: u8 = 0x01;
@@ -68,7 +65,14 @@ fn make_listener(
     socket.listen(max_pending_connections)
 }
 
-async fn start_listening_connections(Opts { listening_addr, max_pending_connections, allowed_ips, auth }: Opts) {
+async fn start_listening_connections(
+    Opts {
+        listening_addr,
+        max_pending_connections,
+        allowed_ips,
+        auth,
+    }: Opts,
+) {
     let listener = match make_listener(listening_addr, max_pending_connections) {
         Ok(l) => l,
         Err(e) => {
@@ -110,7 +114,8 @@ async fn start_listening_connections(Opts { listening_addr, max_pending_connecti
 
             info!(target: "connection", "closed {}", addr)
         });
-}}
+    }
+}
 
 async fn make_connect(
     buffer: &mut Vec<u8>,
@@ -138,8 +143,11 @@ async fn make_connect(
     Ok(())
 }
 
-async fn login(Auth{ user, password }: Auth, buffer: &mut Vec<u8>,
-              stream: &mut TcpStream,) -> Result<(), Socks5Error> {
+async fn login(
+    Auth { user, password }: Auth,
+    buffer: &mut Vec<u8>,
+    stream: &mut TcpStream,
+) -> Result<(), Socks5Error> {
     stream.read_buf(buffer).await?;
     info!(target: "auth request", "accept");
     let request = connect::UserPasswordRequest::try_from(buffer.as_ref())?;
